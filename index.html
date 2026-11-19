@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Входящие заявки</title>
+    <style>
+      body {
+        max-width: 40rem;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        font: 1rem/1.5 system-ui, sans-serif;
+        color: #1a1a1a;
+      }
+
+      textarea {
+        box-sizing: border-box;
+        display: block;
+        width: 100%;
+        margin: .5rem 0;
+        padding: .5rem;
+        font: inherit;
+      }
+
+      button {
+        padding: .4rem .8rem;
+        font: inherit;
+      }
+
+      button:disabled {
+        opacity: .6;
+      }
+
+      .lead {
+        margin-top: 0;
+        color: #333;
+      }
+
+      #result {
+        margin-top: 1.25rem;
+      }
+
+      .notice {
+        margin: 0;
+      }
+
+      .notice.manual,
+      .notice.invalid {
+        padding: .75rem;
+        background: #fff6e8;
+        border: 1px solid #e6c48a;
+        border-radius: 6px;
+      }
+
+      .notice.ready {
+        color: #333;
+      }
+
+      #review {
+        margin-top: 1rem;
+      }
+
+      #review h2 {
+        margin: 0 0 .5rem;
+        font-size: 1.1rem;
+      }
+
+      .label {
+        color: #444;
+      }
+
+      #draft {
+        white-space: pre-wrap;
+        margin: .5rem 0 0;
+        padding: .75rem;
+        background: #f4f6f8;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Входящие заявки</h1>
+    <p class="lead">Вставьте текст заявки. Помощник предложит тему и черновик, а отправлять ответ клиенту решаете вы.</p>
+    <form id="triage-form">
+      <label for="message">Текст заявки</label>
+      <textarea id="message" rows="4"></textarea>
+      <button type="submit">Разобрать заявку</button>
+    </form>
+    <div id="result" aria-live="polite">
+      <p id="notice" class="notice"></p>
+      <section id="review" hidden>
+        <h2>Результат разбора</h2>
+        <p><span class="label">Тема:</span> <strong id="topic"></strong></p>
+        <p class="label">Черновик ответа</p>
+        <p id="draft"></p>
+      </section>
+    </div>
+    <script type="module">
+      const form = document.querySelector("#triage-form");
+      const message = document.querySelector("#message");
+      const button = form.querySelector("button");
+      const notice = document.querySelector("#notice");
+      const review = document.querySelector("#review");
+      const topic = document.querySelector("#topic");
+      const draft = document.querySelector("#draft");
+      const topicLabels = {
+        delivery: "Доставка",
+        pricing: "Цена",
+        other: "Другое",
+      };
+      let requestId = 0;
+
+      function clearPreviousDraft() {
+        review.hidden = true;
+        topic.textContent = "";
+        draft.textContent = "";
+      }
+
+      function showNotice(text, kind) {
+        notice.textContent = text;
+        notice.className = `notice ${kind}`;
+      }
+
+      function showReady(payload) {
+        const label = topicLabels[payload.topic] || payload.topic;
+        topic.textContent = `${label} (${payload.topic})`;
+        draft.textContent = payload.draft;
+        review.hidden = false;
+        showNotice("Проверьте тему и черновик. Клиенту отправляйте только текст, с которым согласны.", "ready");
+      }
+
+      function showManualReview() {
+        clearPreviousDraft();
+        showNotice("Автоматический разбор не удался. Разберите заявку вручную. Предыдущий черновик очищен — не отправляйте его клиенту.", "manual");
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const current = ++requestId;
+        button.disabled = true;
+        clearPreviousDraft();
+        showNotice("Разбираем заявку…", "pending");
+
+        try {
+          const reply = await fetch("/api/triage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: message.value }),
+          });
+          const payload = await reply.json();
+          if (current !== requestId) return;
+
+          if (payload.status === "invalid_input") {
+            clearPreviousDraft();
+            showNotice("Введите текст заявки. Пустое сообщение разобрать нельзя.", "invalid");
+            return;
+          }
+
+          if (
+            payload.status === "ready" &&
+            typeof payload.topic === "string" &&
+            typeof payload.draft === "string" &&
+            payload.draft.trim()
+          ) {
+            showReady(payload);
+            return;
+          }
+
+          showManualReview();
+        } catch {
+          if (current !== requestId) return;
+          showManualReview();
+        } finally {
+          if (current === requestId) button.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
